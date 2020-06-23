@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/camera_container"
     android:background="@android:color/black"
     android:layout_width="match_parent"
@@ -15,5 +15,17 @@
         android:id="@+id/view_finder"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
+
+    <ImageButton
+        android:id="@+id/camera_switch_button"
+        android:layout_width="@dimen/round_button_medium"
+        android:layout_height="@dimen/round_button_medium"
+        android:layout_marginBottom="@dimen/margin_small"
+        android:padding="@dimen/spacing_small"
+        android:scaleType="fitXY"
+        android:layout_gravity="bottom|center_horizontal"
+        android:background="@android:color/transparent"
+        app:srcCompat="@drawable/ic_switch"
+        android:contentDescription="@string/switch_camera_button_alt" />
 
 </FrameLayout>

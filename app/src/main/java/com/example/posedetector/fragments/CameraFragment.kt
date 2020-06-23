@@ -1,6 +1,7 @@
 package com.example.posedetector.fragments
 
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.*
 import android.hardware.display.DisplayManager
 import android.os.Bundle
@@ -9,7 +10,7 @@ import android.util.DisplayMetrics
 import android.util.Log
 import android.view.*
 import android.widget.FrameLayout
-import android.widget.Toast
+import android.widget.ImageButton
 import androidx.camera.core.*
 import androidx.camera.core.Camera
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -21,11 +22,8 @@ import com.example.posedetector.R
 import com.example.posedetector.utils.Person
 import com.example.posedetector.utils.PoseDetector
 import com.example.posedetector.utils.bodyJoints
-import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.text.SimpleDateFormat
-import java.util.*
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.experimental.and
@@ -49,6 +47,7 @@ class CameraFragment : Fragment() {
     private var surfaceHolder: SurfaceHolder? = null
     private var imageAnalyzer: ImageAnalysis? = null
     private var cameraProvider: ProcessCameraProvider? = null
+    private var lensFacing: Int = CameraSelector.LENS_FACING_BACK
 
     private lateinit var container: FrameLayout
     private lateinit var viewFinder: PreviewView
@@ -117,20 +116,17 @@ class CameraFragment : Fragment() {
     }
 
     private fun setPaint() {
-        paint.color = Color.RED
+        paint.color = Color.BLUE
         paint.textSize = 80.0f
         paint.strokeWidth = 8.0f
     }
 
     private fun draw(canvas: Canvas, person: Person, bitmap: Bitmap) {
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-        // Draw `bitmap` and `person` in square canvas.
         val screenWidth: Int
         val screenHeight: Int
         val left: Int
-        val right: Int
         val top: Int
-        val bottom: Int
         if (canvas.height > canvas.width) {
             screenWidth = canvas.width
             screenHeight = canvas.width
@@ -142,16 +138,8 @@ class CameraFragment : Fragment() {
             left = (canvas.width - canvas.height) / 2
             top = 0
         }
-        right = left + screenWidth
-        bottom = top + screenHeight
 
         setPaint()
-//        canvas.drawBitmap(
-//            bitmap,
-//            Rect(0, 0, bitmap.width, bitmap.height),
-//            Rect(left, top, right, bottom),
-//            paint
-//        )
 
         val widthRatio = screenWidth.toFloat() / MODEL_WIDTH
         val heightRatio = screenHeight.toFloat() / MODEL_HEIGHT
@@ -181,26 +169,6 @@ class CameraFragment : Fragment() {
             }
         }
 
-        canvas.drawText(
-            "Score: %.2f".format(person.score),
-            (15.0f * widthRatio),
-            (30.0f * heightRatio + bottom),
-            paint
-        )
-        canvas.drawText(
-            "Device: %s".format(posedetector.device),
-            (15.0f * widthRatio),
-            (50.0f * heightRatio + bottom),
-            paint
-        )
-        canvas.drawText(
-            "Time: %.2f ms".format(posedetector.lastInferenceTimeNanos * 1.0f / 1_000_000),
-            (15.0f * widthRatio),
-            (70.0f * heightRatio + bottom),
-            paint
-        )
-
-        // Draw!
         surfaceHolder!!.unlockCanvasAndPost(canvas)
     }
 
@@ -209,8 +177,41 @@ class CameraFragment : Fragment() {
 
         cameraProviderFuture.addListener(Runnable {
             cameraProvider = cameraProviderFuture.get()
+
+            lensFacing = when {
+                hasBackCamera() -> CameraSelector.LENS_FACING_BACK
+                hasFrontCamera() -> CameraSelector.LENS_FACING_FRONT
+                else -> throw IllegalStateException("Back and front camera are unavailable")
+            }
+
+            updateCameraUi()
+            updateCameraSwitchButton()
             bindCameraUseCases()
         }, ContextCompat.getMainExecutor(requireContext()))
+    }
+
+    private fun hasBackCamera(): Boolean {
+        return cameraProvider?.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA) ?: false
+    }
+
+    private fun hasFrontCamera(): Boolean {
+        return cameraProvider?.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) ?: false
+    }
+
+    private fun updateCameraUi() {
+        container.findViewById<ImageButton>(R.id.camera_switch_button).let {
+            it.isEnabled = false
+
+            it.setOnClickListener {
+                lensFacing = if (CameraSelector.LENS_FACING_FRONT == lensFacing) {
+                    CameraSelector.LENS_FACING_BACK
+                } else {
+                    CameraSelector.LENS_FACING_FRONT
+                }
+                // Re-bind use cases to update selected camera
+                bindCameraUseCases()
+            }
+        }
     }
 
     private fun bindCameraUseCases() {
@@ -226,7 +227,7 @@ class CameraFragment : Fragment() {
             ?: throw IllegalStateException("Camera initialization failed.")
 
         val cameraSelector =
-            CameraSelector.Builder().requireLensFacing(CameraSelector.LENS_FACING_BACK).build()
+            CameraSelector.Builder().requireLensFacing(lensFacing).build()
 
         preview = Preview.Builder()
             .setTargetAspectRatio(screenAspectRatio)
@@ -241,12 +242,22 @@ class CameraFragment : Fragment() {
 
                     val imageBitmap = imageProxy.toRGBBitmap()
 
-                    val rotateMatrix = Matrix()
-                    rotateMatrix.postRotate(90.0f)
+                    val imageMatrix = Matrix()
+                    if (lensFacing == CameraSelector.LENS_FACING_BACK) {
+                        imageMatrix.postRotate(90.0f)
+                    } else if (lensFacing == CameraSelector.LENS_FACING_FRONT) {
+                        imageMatrix.postRotate(-90.0f)
+                        imageMatrix.postScale(
+                            -1f,
+                            1f,
+                            imageProxy.width / 2f,
+                            imageProxy.height / 2f
+                        )
+                    }
 
                     val rotatedBitmap = Bitmap.createBitmap(
                         imageBitmap, 0, 0, imageProxy.width, imageProxy.height,
-                        rotateMatrix, true
+                        imageMatrix, true
                     )
 
                     imageBitmap.recycle()
@@ -266,6 +277,12 @@ class CameraFragment : Fragment() {
         }
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        updateCameraUi()
+        updateCameraSwitchButton()
+    }
+
     private fun ImageProxy.toRGBBitmap(): Bitmap {
         val yuvBytes = this.convertToNV21()
         val renderScript = RenderScript.create(requireContext())
@@ -277,7 +294,8 @@ class CameraFragment : Fragment() {
             Allocation.createSized(renderScript, Element.U8(renderScript), yuvBytes.size)
         allocationYuv.copyFrom(yuvBytes)
 
-        val scriptYuvToRGb = ScriptIntrinsicYuvToRGB.create(renderScript, Element.U8_4(renderScript))
+        val scriptYuvToRGb =
+            ScriptIntrinsicYuvToRGB.create(renderScript, Element.U8_4(renderScript))
         scriptYuvToRGb.setInput(allocationYuv)
         scriptYuvToRGb.forEach(allocationRgb)
 
@@ -313,13 +331,6 @@ class CameraFragment : Fragment() {
         return nv21array
     }
 
-    private fun ByteArray.toIntArray(): IntArray {
-        val byteBuffer = ByteBuffer.wrap(this).order(ByteOrder.LITTLE_ENDIAN)
-        val intArray = IntArray(this.size / 4)
-        byteBuffer.asIntBuffer().put(intArray)
-        return intArray;
-    }
-
     private fun processImage(bitmap: Bitmap) {
         // Crop bitmap.
         val croppedBitmap = cropBitmap(bitmap)
@@ -329,7 +340,7 @@ class CameraFragment : Fragment() {
 
         // Perform inference.
         val person = posedetector.estimateSinglePose(scaledBitmap)
-        val canvas: Canvas = surfaceHolder!!.lockCanvas()
+        val canvas = surfaceHolder!!.lockCanvas() ?: return
 
         bitmap.recycle()
         croppedBitmap.recycle()
@@ -385,6 +396,15 @@ class CameraFragment : Fragment() {
             return AspectRatio.RATIO_4_3
         }
         return AspectRatio.RATIO_16_9
+    }
+
+    private fun updateCameraSwitchButton() {
+        val switchCamerasButton = container.findViewById<ImageButton>(R.id.camera_switch_button)
+        try {
+            switchCamerasButton.isEnabled = hasBackCamera() && hasFrontCamera()
+        } catch (exception: CameraInfoUnavailableException) {
+            switchCamerasButton.isEnabled = false
+        }
     }
 
     companion object {
